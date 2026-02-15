@@ -31,7 +31,7 @@ class CrossSeedAuto(_PluginBase):
     # 插件图标
     plugin_icon = "crossseed.png"
     # 插件版本
-    plugin_version = "1.5"
+    plugin_version = "1.6"
     # 插件作者
     plugin_author = "zhjay"
     # 作者主页
@@ -61,7 +61,7 @@ class CrossSeedAuto(_PluginBase):
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
     
-    # 退出事件
+    # 退出事件（类级别，不在这里初始化）
     _event = None
 
     # 辅助类
@@ -73,17 +73,15 @@ class CrossSeedAuto(_PluginBase):
         """
         初始化插件
         """
-        from threading import Event
-        
         logger.info("=" * 60)
         logger.info("跨站自动辅种插件开始初始化...")
         
-        # 初始化退出事件
-        if not self._event:
-            self._event = Event()
-        
         # 停止现有任务
         self.stop_service()
+        
+        # 初始化退出事件（每次初始化都重新创建）
+        from threading import Event
+        self._event = Event()
 
         if config:
             logger.info("加载插件配置...")
@@ -1649,15 +1647,14 @@ class CrossSeedAuto(_PluginBase):
         停止插件服务
         """
         try:
-            # 设置退出事件
-            if self._event:
-                self._event.set()
-                logger.info("已设置退出事件")
-            
             # 停止定时器
             if self._scheduler:
                 self._scheduler.remove_all_jobs()
                 if self._scheduler.running:
+                    # 设置退出事件
+                    if self._event:
+                        self._event.set()
+                        logger.info("已设置退出事件")
                     self._scheduler.shutdown()
                 self._scheduler = None
                 logger.info("定时任务已停止")
