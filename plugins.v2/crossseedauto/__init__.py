@@ -3,6 +3,7 @@ import random
 import time
 from datetime import datetime, timedelta
 from typing import Any, List, Dict, Tuple, Optional
+from urllib.parse import urljoin
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -29,7 +30,7 @@ class CrossSeedAuto(_PluginBase):
     # 插件图标
     plugin_icon = "crossseed.png"
     # 插件版本
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     # 插件作者
     plugin_author = "zhjay"
     # 作者主页
@@ -330,44 +331,94 @@ class CrossSeedAuto(_PluginBase):
                 logger.error(f"下载器实例获取失败: {self._downloader}")
                 return []
             
-            # 获取所有种子
-            torrents = downloader.get_torrents()
-            if not torrents:
+            # 检查下载器连接状态
+            if downloader.is_inactive():
+                logger.error(f"下载器 {self._downloader} 未连接，请检查配置")
                 return []
             
-            # 过滤已完成的种子（做种中或已完成）
+            # 获取已完成的种子
+            logger.info(f"正在从下载器 {self._downloader} 获取已完成种子...")
+            torrents = downloader.get_completed_torrents()
+            
+            if not torrents:
+                logger.info(f"下载器 {self._downloader} 没有已完成种子")
+                return []
+            
+            logger.info(f"下载器 {self._downloader} 已完成种子数：{len(torrents)}")
+            
+            # 转换为统一格式
             completed_torrents = []
             for torrent in torrents:
-                # 检查种子状态
-                state = getattr(torrent, 'state', '').lower()
-                if state in ['seeding', 'uploading', 'stalledup', 'completed']:
-                    completed_torrents.append({
-                        'hash': torrent.hash,
-                        'name': torrent.name,
-                        'size': torrent.size,
-                        'save_path': getattr(torrent, 'save_path', ''),
-                        'tags': getattr(torrent, 'tags', []),
-                        'category': getattr(torrent, 'category', ''),
-                        'tracker': self._get_tracker_domain(torrent)
-                    })
+                try:
+                    # 检查种子状态
+                    if downloader_service.type == "qbittorrent":
+                        state = torrent.get('state', '').lower()
+                        # QB的做种状态
+                        if state not in ['seeding', 'uploading', 'stalledup', 'pausedup', 'stoppedup']:
+                            continue
+                        
+                        # 获取标签
+                        tags_str = torrent.get('tags', '')
+                        tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()] if tags_str else []
+                        
+                        completed_torrents.append({
+                            'hash': torrent.get('hash'),
+                            'name': torrent.get('name'),
+                            'size': torrent.get('total_size', 0),
+                            'save_path': torrent.get('save_path', ''),
+                            'tags': tags,
+                            'category': torrent.get('category', ''),
+                            'tracker': self._get_tracker_domain_qb(torrent)
+                        })
+                    else:  # transmission
+                        # TR的做种状态
+                        if not (torrent.status.stopped or torrent.percent_done == 1):
+                            continue
+                        
+                        completed_torrents.append({
+                            'hash': torrent.hashString,
+                            'name': torrent.name,
+                            'size': torrent.total_size,
+                            'save_path': torrent.download_dir,
+                            'tags': list(torrent.labels) if hasattr(torrent, 'labels') and torrent.labels else [],
+                            'category': '',
+                            'tracker': self._get_tracker_domain_tr(torrent)
+                        })
+                except Exception as e:
+                    logger.debug(f"处理种子失败: {str(e)}")
+                    continue
             
+            logger.info(f"筛选后的已完成种子数：{len(completed_torrents)}")
             return completed_torrents
+            
         except Exception as e:
             logger.error(f"扫描种子失败: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
 
-    def _get_tracker_domain(self, torrent) -> str:
+    def _get_tracker_domain_qb(self, torrent: Dict) -> str:
         """
-        获取种子的tracker域名
+        获取QB种子的tracker域名
+        """
+        try:
+            # QB需要单独查询tracker信息，这里简化处理
+            # 实际使用时可以通过 downloader.get_torrent_trackers(hash) 获取
+            return ""
+        except Exception as e:
+            logger.debug(f"获取tracker域名失败: {str(e)}")
+            return ""
+    
+    def _get_tracker_domain_tr(self, torrent) -> str:
+        """
+        获取TR种子的tracker域名
         """
         try:
             trackers = getattr(torrent, 'trackers', [])
             if trackers:
-                # 获取第一个有效的tracker
                 for tracker in trackers:
-                    url = getattr(tracker, 'url', '')
+                    url = getattr(tracker, 'announce', '')
                     if url and '://' in url:
-                        # 提取域名
                         domain = url.split('://')[1].split('/')[0]
                         return domain
         except Exception as e:
@@ -779,16 +830,133 @@ class CrossSeedAuto(_PluginBase):
         """
         解析搜索结果
         注意：这是简化实现，实际需要根据站点的HTML结构解析
-        """
-        # 这里返回空列表，实际需要解析HTML或JSON
-        # 由于不同站点的格式差异很大，这里只提供框架
-        # 实际使用时需要：
-        # 1. 使用BeautifulSoup解析HTML
-        # 2. 或者解析JSON响应
-        # 3. 提取种子ID、标题、大小、下载链接等信息
         
-        logger.debug(f"解析站点 {site.name} 的搜索结果（简化实现）")
-        return []
+        支持的站点类型：
+        1. NexusPHP类站点（大部分PT站）
+        2. 其他自定义站点需要单独适配
+        """
+        try:
+            from lxml import etree
+            
+            # 解析HTML
+            html_element = etree.HTML(html)
+            if html_element is None:
+                logger.debug(f"站点 {site.name} HTML解析失败")
+                return []
+            
+            torrents = []
+            
+            # 尝试NexusPHP类站点的解析（最常见的PT站点）
+            # 种子列表通常在 table.torrents 或 table.torrent_list 中
+            torrent_rows = html_element.xpath('//table[contains(@class, "torrent")]//tr[position()>1]')
+            
+            if not torrent_rows:
+                # 尝试其他常见的表格结构
+                torrent_rows = html_element.xpath('//table[@id="torrent_table"]//tr[position()>1]')
+            
+            if not torrent_rows:
+                logger.debug(f"站点 {site.name} 未找到种子列表")
+                return []
+            
+            logger.debug(f"站点 {site.name} 找到 {len(torrent_rows)} 行数据")
+            
+            for row in torrent_rows:
+                try:
+                    # 提取种子ID和下载链接
+                    # 常见格式：download.php?id=123 或 download.php?hash=xxx
+                    download_links = row.xpath('.//a[contains(@href, "download.php")]/@href')
+                    if not download_links:
+                        continue
+                    
+                    download_link = download_links[0]
+                    
+                    # 提取种子ID
+                    torrent_id = ""
+                    if 'id=' in download_link:
+                        torrent_id = download_link.split('id=')[1].split('&')[0]
+                    elif 'hash=' in download_link:
+                        torrent_id = download_link.split('hash=')[1].split('&')[0]
+                    
+                    # 提取种子标题
+                    title_elements = row.xpath('.//a[contains(@href, "details.php")]/@title | .//a[contains(@href, "details.php")]/text()')
+                    title = title_elements[0].strip() if title_elements else ""
+                    
+                    # 提取文件大小
+                    # 通常在某个td中，包含 GB、MB、TB 等单位
+                    size_text = ""
+                    size_cells = row.xpath('.//td[contains(text(), "GB") or contains(text(), "MB") or contains(text(), "TB")]/text()')
+                    if size_cells:
+                        size_text = size_cells[0].strip()
+                    
+                    # 解析大小为字节
+                    size_bytes = self._parse_size_to_bytes(size_text)
+                    
+                    # 构建完整的下载URL
+                    if not download_link.startswith('http'):
+                        download_url = urljoin(site.url, download_link)
+                    else:
+                        download_url = download_link
+                    
+                    if title and size_bytes > 0:
+                        torrents.append({
+                            'id': torrent_id,
+                            'title': title,
+                            'size': size_bytes,
+                            'url': download_url,
+                        })
+                        logger.debug(f"解析到种子: {title}, 大小: {size_text}")
+                
+                except Exception as e:
+                    logger.debug(f"解析种子行失败: {str(e)}")
+                    continue
+            
+            logger.info(f"站点 {site.name} 解析到 {len(torrents)} 个种子")
+            return torrents
+            
+        except ImportError:
+            logger.error("缺少lxml库，无法解析HTML，请安装: pip install lxml")
+            return []
+        except Exception as e:
+            logger.error(f"解析搜索结果失败: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
+    
+    def _parse_size_to_bytes(self, size_text: str) -> int:
+        """
+        将大小文本转换为字节数
+        支持格式：1.23 GB, 456 MB, 1.5 TB
+        """
+        try:
+            if not size_text:
+                return 0
+            
+            # 移除多余空格
+            size_text = size_text.strip().upper()
+            
+            # 提取数字和单位
+            import re
+            match = re.match(r'([\d.]+)\s*(TB|GB|MB|KB|B)', size_text)
+            if not match:
+                return 0
+            
+            value = float(match.group(1))
+            unit = match.group(2)
+            
+            # 转换为字节
+            multipliers = {
+                'B': 1,
+                'KB': 1024,
+                'MB': 1024 ** 2,
+                'GB': 1024 ** 3,
+                'TB': 1024 ** 4,
+            }
+            
+            return int(value * multipliers.get(unit, 0))
+        
+        except Exception as e:
+            logger.debug(f"解析大小失败: {size_text}, 错误: {str(e)}")
+            return 0
 
     def _validate_file_size(self, source_size: int, target_size: int) -> bool:
         """
