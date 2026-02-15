@@ -626,5 +626,17 @@
     "history": {
       "v2.0.0": "首次发布：可配置报告模块、历史记录页面、下载器通用化、存储路径可配置"
     }
+  },
+  "CrossSeedAuto": {
+    "name": "跨站自动辅种",
+    "description": "基于文件名和媒体元数据的智能跨站辅种，支持主辅分离和自动止损。",
+    "labels": "做种",
+    "version": "1.0",
+    "icon": "crossseed.png",
+    "author": "zhjay",
+    "level": 2,
+    "history": {
+      "v1.0": "MoviePilot V2 版本跨站自动辅种插件"
+    }
   }
 }
