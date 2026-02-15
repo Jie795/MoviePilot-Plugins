@@ -31,7 +31,7 @@ class CrossSeedAuto(_PluginBase):
     # 插件图标
     plugin_icon = "crossseed.png"
     # 插件版本
-    plugin_version = "1.6"
+    plugin_version = "1.7"
     # 插件作者
     plugin_author = "zhjay"
     # 作者主页
@@ -311,11 +311,10 @@ class CrossSeedAuto(_PluginBase):
                         success = self._add_torrent_to_downloader(torrent, match)
                         if success:
                             success_count += 1
-                            # 更新成功缓存
+                            # 更新成功缓存（按站点）
                             self._update_success_cache(
                                 torrent.get('hash'),
-                                torrent.get('source_site', ''),
-                                [match.get('site_id')]
+                                match.get('site_id')
                             )
                             
                             # 记录历史
@@ -328,10 +327,10 @@ class CrossSeedAuto(_PluginBase):
                             })
                         else:
                             failed_count += 1
-                            # 更新失败缓存
+                            # 更新失败缓存（按站点）
                             self._update_failed_cache(
                                 torrent.get('hash'),
-                                torrent.get('source_site', ''),
+                                match.get('site_id'),
                                 "推送失败"
                             )
                             
@@ -477,23 +476,23 @@ class CrossSeedAuto(_PluginBase):
         """
         过滤种子
         - 过滤带有排除标签的种子
-        - 过滤已在缓存中的种子
+        - 按站点检查缓存（成功/失败）
         - 识别种子所属站点并排重
         """
         filtered = []
         success_cache = cache.get('success', {})
         failed_cache = cache.get('failed', {})
-        
+
         for torrent in torrents:
             torrent_hash = torrent.get('hash')
             torrent_name = torrent.get('name')
-            
+
             # 检查排除标签
             if self._exclude_tags:
                 tags = torrent.get('tags', [])
                 if isinstance(tags, str):
                     tags = [tag.strip() for tag in tags.split(',')]
-                
+
                 # 检查是否包含排除标签
                 has_exclude_tag = False
                 for exclude_tag in self._exclude_tags:
@@ -501,47 +500,50 @@ class CrossSeedAuto(_PluginBase):
                         logger.debug(f"种子 {torrent_name} 包含排除标签 {exclude_tag}，跳过")
                         has_exclude_tag = True
                         break
-                
+
                 if has_exclude_tag:
                     continue
-            
-            # 检查成功缓存
-            if torrent_hash in success_cache:
-                logger.debug(f"种子 {torrent_name} 已在成功缓存中，跳过")
-                continue
-            
-            # 检查失败缓存
-            if torrent_hash in failed_cache:
-                failed_info = failed_cache[torrent_hash]
-                retry_count = failed_info.get('retry_count', 0)
-                if retry_count >= self._max_retry:
-                    logger.debug(f"种子 {torrent_name} 已达到最大重试次数，跳过")
-                    continue
-            
+
             # 识别种子所属站点
             tracker_domain = torrent.get('tracker', '')
             source_site = self._identify_site(tracker_domain)
             if source_site:
                 torrent['source_site'] = source_site
                 logger.debug(f"种子 {torrent_name} 来自站点: {source_site}")
-            
-            # 检查是否在目标站点列表中（避免重复辅种到同一站点）
-            if source_site and source_site in self._target_sites:
-                logger.debug(f"种子 {torrent_name} 的源站点在目标站点列表中，移除该目标站点")
-                # 创建副本并移除源站点
-                torrent['filtered_target_sites'] = [
-                    site for site in self._target_sites if site != source_site
-                ]
-            else:
-                torrent['filtered_target_sites'] = self._target_sites.copy()
-            
-            if not torrent['filtered_target_sites']:
+
+            # 过滤目标站点：移除源站点，按站点检查缓存
+            available_sites = []
+            for site_id in self._target_sites:
+                # 跳过源站点
+                if source_site and site_id == source_site:
+                    logger.debug(f"跳过源站点: {site_id}")
+                    continue
+
+                # 检查该站点是否已成功辅种（按站点缓存）
+                cache_key = f"{torrent_hash}_{site_id}"
+                if cache_key in success_cache:
+                    logger.debug(f"种子 {torrent_name} 已在站点 {site_id} 辅种成功，跳过")
+                    continue
+
+                # 检查该站点是否已失败且达到最大重试次数（按站点缓存）
+                if cache_key in failed_cache:
+                    failed_info = failed_cache[cache_key]
+                    retry_count = failed_info.get('retry_count', 0)
+                    if retry_count >= self._max_retry:
+                        logger.debug(f"种子 {torrent_name} 在站点 {site_id} 已达到最大重试次数，跳过")
+                        continue
+
+                available_sites.append(site_id)
+
+            if not available_sites:
                 logger.debug(f"种子 {torrent_name} 无可用的目标站点，跳过")
                 continue
-            
+
+            torrent['filtered_target_sites'] = available_sites
             filtered.append(torrent)
-        
+
         return filtered
+
 
     def _identify_site(self, tracker_domain: str) -> Optional[str]:
         """
@@ -580,30 +582,33 @@ class CrossSeedAuto(_PluginBase):
         """
         self.save_data('cache', cache)
 
-    def _update_success_cache(self, torrent_hash: str, source_site: str, target_sites: List[str]):
+    def _update_success_cache(self, torrent_hash: str, site_id: str):
         """
-        更新成功缓存
+        更新成功缓存（按站点）
         """
         cache = self._load_cache()
-        cache['success'][torrent_hash] = {
-            'source_site': source_site,
-            'target_sites': target_sites,
+        cache_key = f"{torrent_hash}_{site_id}"
+        cache['success'][cache_key] = {
+            'torrent_hash': torrent_hash,
+            'site_id': site_id,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         self._save_cache(cache)
 
-    def _update_failed_cache(self, torrent_hash: str, source_site: str, reason: str):
+    def _update_failed_cache(self, torrent_hash: str, site_id: str, reason: str):
         """
-        更新失败缓存
+        更新失败缓存（按站点）
         """
         cache = self._load_cache()
-        if torrent_hash in cache['failed']:
-            cache['failed'][torrent_hash]['retry_count'] += 1
-            cache['failed'][torrent_hash]['last_reason'] = reason
-            cache['failed'][torrent_hash]['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cache_key = f"{torrent_hash}_{site_id}"
+        if cache_key in cache['failed']:
+            cache['failed'][cache_key]['retry_count'] += 1
+            cache['failed'][cache_key]['last_reason'] = reason
+            cache['failed'][cache_key]['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         else:
-            cache['failed'][torrent_hash] = {
-                'source_site': source_site,
+            cache['failed'][cache_key] = {
+                'torrent_hash': torrent_hash,
+                'site_id': site_id,
                 'reason': reason,
                 'retry_count': 1,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -623,29 +628,11 @@ class CrossSeedAuto(_PluginBase):
     def _extract_metadata(self, torrent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         提取种子的媒体元数据
-        从种子的save_path识别媒体信息，失败则使用种子名称解析
+        直接从种子名称解析，不查询TMDB
         """
         torrent_name = torrent.get('name', '')
-        save_path = torrent.get('save_path', '')
         
-        # 方法1: 通过种子保存路径识别媒体信息
-        if save_path:
-            try:
-                # 构建完整路径：save_path + torrent_name
-                import os
-                full_path = os.path.join(save_path, torrent_name)
-                
-                logger.debug(f"尝试通过路径识别: {full_path}")
-                media_info = self._media_chain.recognize_by_path(path=full_path)
-                if media_info:
-                    metadata = self._extract_from_mediainfo(media_info)
-                    if metadata:
-                        logger.info(f"通过路径识别到媒体信息: {torrent_name} -> {metadata.get('title')}")
-                        return metadata
-            except Exception as e:
-                logger.debug(f"通过路径识别媒体信息失败: {str(e)}")
-        
-        # 方法2: 通过种子名称解析（兜底策略）
+        # 直接使用种子名称解析（不查询TMDB）
         metadata = self._parse_torrent_name(torrent_name)
         if metadata:
             logger.info(f"通过名称解析到媒体信息: {torrent_name} -> {metadata.get('title')}")
