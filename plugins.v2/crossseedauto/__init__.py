@@ -1,6 +1,7 @@
 import re
 import random
 import time
+import os
 from datetime import datetime, timedelta
 from typing import Any, List, Dict, Tuple, Optional
 from urllib.parse import urljoin
@@ -30,7 +31,7 @@ class CrossSeedAuto(_PluginBase):
     # 插件图标
     plugin_icon = "crossseed.png"
     # 插件版本
-    plugin_version = "1.4"
+    plugin_version = "1.5"
     # 插件作者
     plugin_author = "zhjay"
     # 作者主页
@@ -59,6 +60,9 @@ class CrossSeedAuto(_PluginBase):
 
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
+    
+    # 退出事件
+    _event = None
 
     # 辅助类
     _downloader_helper: Optional[DownloaderHelper] = None
@@ -69,8 +73,14 @@ class CrossSeedAuto(_PluginBase):
         """
         初始化插件
         """
+        from threading import Event
+        
         logger.info("=" * 60)
         logger.info("跨站自动辅种插件开始初始化...")
+        
+        # 初始化退出事件
+        if not self._event:
+            self._event = Event()
         
         # 停止现有任务
         self.stop_service()
@@ -181,6 +191,11 @@ class CrossSeedAuto(_PluginBase):
         """
         logger.info("开始执行跨站自动辅种任务")
         
+        # 检查退出事件
+        if self._event and self._event.is_set():
+            logger.info("检测到退出信号，任务终止")
+            return
+        
         # 检查配置
         if not self._downloader:
             logger.error("未配置下载器，任务终止")
@@ -200,6 +215,11 @@ class CrossSeedAuto(_PluginBase):
                 logger.info("未扫描到已完成的种子")
                 return
             
+            # 检查退出事件
+            if self._event and self._event.is_set():
+                logger.info("检测到退出信号，任务终止")
+                return
+            
             logger.info(f"扫描到 {len(torrents)} 个已完成种子")
             
             # 过滤种子
@@ -208,11 +228,21 @@ class CrossSeedAuto(_PluginBase):
                 logger.info("过滤后无需辅种的种子")
                 return
             
+            # 检查退出事件
+            if self._event and self._event.is_set():
+                logger.info("检测到退出信号，任务终止")
+                return
+            
             logger.info(f"过滤后需要辅种的种子数量: {len(filtered_torrents)}")
             
             # 提取元数据
             torrents_with_metadata = []
             for torrent in filtered_torrents:
+                # 检查退出事件
+                if self._event and self._event.is_set():
+                    logger.info("检测到退出信号，任务终止")
+                    return
+                
                 try:
                     metadata = self._extract_metadata(torrent)
                     if metadata:
@@ -228,11 +258,21 @@ class CrossSeedAuto(_PluginBase):
                 logger.info("提取元数据后无可用种子")
                 return
             
+            # 检查退出事件
+            if self._event and self._event.is_set():
+                logger.info("检测到退出信号，任务终止")
+                return
+            
             logger.info(f"成功提取元数据的种子数量: {len(torrents_with_metadata)}")
             
             # 跨站检索与校验
             matched_results = []
             for torrent in torrents_with_metadata:
+                # 检查退出事件
+                if self._event and self._event.is_set():
+                    logger.info("检测到退出信号，任务终止")
+                    return
+                
                 try:
                     matches = self._search_and_validate(torrent)
                     if matches:
@@ -248,6 +288,11 @@ class CrossSeedAuto(_PluginBase):
                 logger.info("跨站检索后无匹配种子")
                 return
             
+            # 检查退出事件
+            if self._event and self._event.is_set():
+                logger.info("检测到退出信号，任务终止")
+                return
+            
             logger.info(f"跨站检索成功的种子数量: {len(matched_results)}")
             
             # 推送种子到下载器
@@ -255,6 +300,11 @@ class CrossSeedAuto(_PluginBase):
             failed_count = 0
             
             for result in matched_results:
+                # 检查退出事件
+                if self._event and self._event.is_set():
+                    logger.info("检测到退出信号，任务终止")
+                    return
+                
                 torrent = result['torrent']
                 matches = result['matches']
                 
@@ -575,15 +625,20 @@ class CrossSeedAuto(_PluginBase):
     def _extract_metadata(self, torrent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         提取种子的媒体元数据
-        优先使用路径识别，失败则使用种子名称解析
+        从种子的save_path识别媒体信息，失败则使用种子名称解析
         """
         torrent_name = torrent.get('name', '')
         save_path = torrent.get('save_path', '')
         
-        # 方法1: 通过路径识别媒体信息
+        # 方法1: 通过种子保存路径识别媒体信息
         if save_path:
             try:
-                media_info = self._media_chain.recognize_by_path(path=save_path)
+                # 构建完整路径：save_path + torrent_name
+                import os
+                full_path = os.path.join(save_path, torrent_name)
+                
+                logger.debug(f"尝试通过路径识别: {full_path}")
+                media_info = self._media_chain.recognize_by_path(path=full_path)
                 if media_info:
                     metadata = self._extract_from_mediainfo(media_info)
                     if metadata:
@@ -592,7 +647,7 @@ class CrossSeedAuto(_PluginBase):
             except Exception as e:
                 logger.debug(f"通过路径识别媒体信息失败: {str(e)}")
         
-        # 方法2: 通过种子名称解析
+        # 方法2: 通过种子名称解析（兜底策略）
         metadata = self._parse_torrent_name(torrent_name)
         if metadata:
             logger.info(f"通过名称解析到媒体信息: {torrent_name} -> {metadata.get('title')}")
@@ -1594,10 +1649,17 @@ class CrossSeedAuto(_PluginBase):
         停止插件服务
         """
         try:
+            # 设置退出事件
+            if self._event:
+                self._event.set()
+                logger.info("已设置退出事件")
+            
+            # 停止定时器
             if self._scheduler:
                 self._scheduler.remove_all_jobs()
                 if self._scheduler.running:
                     self._scheduler.shutdown()
                 self._scheduler = None
+                logger.info("定时任务已停止")
         except Exception as e:
             logger.error(f"停止插件服务失败: {str(e)}")
