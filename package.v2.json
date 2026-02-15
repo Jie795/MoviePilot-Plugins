@@ -631,7 +631,7 @@
     "name": "跨站自动辅种",
     "description": "基于文件名和媒体元数据的智能跨站辅种，支持主辅分离和自动止损。",
     "labels": "做种",
-    "version": "1.0",
+    "version": "1.1",
     "icon": "crossseed.png",
     "author": "zhjay",
     "level": 2,
