@@ -30,7 +30,7 @@ class CrossSeedAuto(_PluginBase):
     # 插件图标
     plugin_icon = "crossseed.png"
     # 插件版本
-    plugin_version = "1.3"
+    plugin_version = "1.4"
     # 插件作者
     plugin_author = "zhjay"
     # 作者主页
@@ -52,9 +52,9 @@ class CrossSeedAuto(_PluginBase):
     _exclude_tags: list = []
     _size_tolerance: float = 0.01
     _enable_split_mode: bool = False
-    _search_cooldown_min: int = 5
+    _search_cooldown_min: int = 10
     _search_cooldown_max: int = 10
-    _max_retry: int = 3
+    _max_retry: int = 1
     _clear_cache: bool = False
 
     # 定时器
@@ -88,9 +88,9 @@ class CrossSeedAuto(_PluginBase):
                 self._exclude_tags = [tag.strip() for tag in self._exclude_tags.split(',') if tag.strip()]
             self._size_tolerance = config.get("size_tolerance", 0.01)
             self._enable_split_mode = config.get("enable_split_mode", False)
-            self._search_cooldown_min = config.get("search_cooldown_min", 5)
+            self._search_cooldown_min = config.get("search_cooldown_min", 10)
             self._search_cooldown_max = config.get("search_cooldown_max", 10)
-            self._max_retry = config.get("max_retry", 3)
+            self._max_retry = config.get("max_retry", 1)
             self._clear_cache = config.get("clear_cache", False)
             
             logger.info(f"配置加载完成: 启用={self._enabled}, 下载器={self._downloader}, "
@@ -684,33 +684,46 @@ class CrossSeedAuto(_PluginBase):
     def _build_search_keywords(self, metadata: Dict[str, Any]) -> str:
         """
         构建搜索关键词
+        优先使用中文标题，简化搜索关键词以提高匹配率
         """
         keywords = []
         
-        # 标题
+        # 标题（优先使用中文部分）
         title = metadata.get('title', '')
         if title:
-            keywords.append(title)
+            # 提取中文标题（如果存在）
+            chinese_title = self._extract_chinese_title(title)
+            if chinese_title:
+                keywords.append(chinese_title)
+            else:
+                # 如果没有中文，使用英文标题
+                keywords.append(title)
         
-        # 年份
+        # 年份（可选，提高精确度）
         year = metadata.get('year', '')
         if year:
             keywords.append(str(year))
         
-        # 分辨率
-        resolution = metadata.get('resolution', '')
-        if resolution:
-            keywords.append(resolution)
-        
-        # 季集信息
-        season = metadata.get('season', '')
-        episode = metadata.get('episode', '')
-        if season:
-            keywords.append(f"S{str(season).zfill(2)}")
-        if episode:
-            keywords.append(f"E{str(episode).zfill(2)}")
+        # 不添加分辨率和编码信息，避免搜索结果过于精确导致匹配失败
         
         return ' '.join(keywords)
+    
+    def _extract_chinese_title(self, title: str) -> str:
+        """
+        从标题中提取中文部分
+        例如: "心灵奇旅.Soul.2020" -> "心灵奇旅"
+        """
+        import re
+        
+        # 匹配中文字符
+        chinese_pattern = re.compile(r'[\u4e00-\u9fff]+')
+        chinese_parts = chinese_pattern.findall(title)
+        
+        if chinese_parts:
+            # 返回第一个中文部分（通常是主标题）
+            return chinese_parts[0]
+        
+        return ""
 
     def _search_and_validate(self, torrent: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -724,7 +737,7 @@ class CrossSeedAuto(_PluginBase):
         if not target_sites:
             return []
         
-        # 构建搜索关键词
+        # 构建搜索关键词（优先使用中文标题）
         keywords = self._build_search_keywords(metadata)
         if not keywords:
             logger.warning(f"无法构建搜索关键词: {torrent_name}")
@@ -736,10 +749,9 @@ class CrossSeedAuto(_PluginBase):
         
         # 遍历目标站点
         for site_id in target_sites:
-            # 添加随机冷却时间
-            cooldown = random.randint(self._search_cooldown_min, self._search_cooldown_max)
-            logger.debug(f"站点 {site_id} 搜索冷却 {cooldown} 秒")
-            time.sleep(cooldown)
+            # 固定冷却时间10秒
+            logger.debug(f"站点 {site_id} 搜索冷却 10 秒")
+            time.sleep(10)
             
             # 搜索站点
             site_matches = self._search_site(site_id, keywords, torrent_size)
@@ -1378,32 +1390,20 @@ class CrossSeedAuto(_PluginBase):
                                     'component': 'VTextField',
                                     'props': {
                                         'model': 'search_cooldown_min',
-                                        'label': '搜索冷却最小值(秒)',
-                                        'placeholder': '默认5'
-                                    }
-                                }]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {'cols': 12, 'md': 4},
-                                'content': [{
-                                    'component': 'VTextField',
-                                    'props': {
-                                        'model': 'search_cooldown_max',
-                                        'label': '搜索冷却最大值(秒)',
+                                        'label': '搜索冷却时间(秒)',
                                         'placeholder': '默认10'
                                     }
                                 }]
                             },
                             {
                                 'component': 'VCol',
-                                'props': {'cols': 12, 'md': 4},
+                                'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
                                     'props': {
                                         'model': 'max_retry',
                                         'label': '最大重试次数',
-                                        'placeholder': '默认3'
+                                        'placeholder': '默认1'
                                     }
                                 }]
                             }
@@ -1419,8 +1419,8 @@ class CrossSeedAuto(_PluginBase):
                                 'props': {
                                     'type': 'info',
                                     'variant': 'tonal',
-                                    'text': '基于"文件名 + 媒体元数据 + 文件大小容差"的跨站匹配算法，'
-                                            '实现非 Infohash 依赖的自动化辅种。支持主辅分离模式和自动止损机制。'
+                                    'text': '基于"文件名 + 媒体元数据 + 文件大小容差"的跨站匹配算法。'
+                                            '搜索时优先使用中文标题，提高匹配成功率。'
                                 }
                             }]
                         }]
@@ -1453,9 +1453,8 @@ class CrossSeedAuto(_PluginBase):
             "exclude_tags": [],
             "size_tolerance": 0.01,
             "enable_split_mode": False,
-            "search_cooldown_min": 5,
-            "search_cooldown_max": 10,
-            "max_retry": 3,
+            "search_cooldown_min": 10,
+            "max_retry": 1,
             "clear_cache": False,
         }
 
