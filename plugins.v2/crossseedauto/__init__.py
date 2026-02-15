@@ -31,7 +31,7 @@ class CrossSeedAuto(_PluginBase):
     # 插件图标
     plugin_icon = "crossseed.png"
     # 插件版本
-    plugin_version = "1.7"
+    plugin_version = "1.8"
     # 插件作者
     plugin_author = "zhjay"
     # 作者主页
@@ -113,7 +113,7 @@ class CrossSeedAuto(_PluginBase):
                 logger.info("缓存清理完成")
 
         # 初始化辅助类
-        if self._enabled or self._onlyonce:
+        if self.get_state() or self._onlyonce:
             logger.info("初始化辅助类...")
             self._downloader_helper = DownloaderHelper()
             self._sites_helper = SitesHelper()
@@ -122,7 +122,7 @@ class CrossSeedAuto(_PluginBase):
 
             # 立即运行一次
             if self._onlyonce:
-                logger.info("配置了立即运行一次，启动定时任务...")
+                logger.info("辅种服务启动，立即运行一次")
                 self._scheduler = BackgroundScheduler(timezone=settings.TZ)
                 self._scheduler.add_job(
                     func=self._cross_seed_task,
@@ -148,7 +148,7 @@ class CrossSeedAuto(_PluginBase):
         """
         获取插件状态
         """
-        return self._enabled
+        return True if self._enabled and self._cron and self._downloader and self._target_sites else False
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
@@ -187,7 +187,7 @@ class CrossSeedAuto(_PluginBase):
         """
         跨站辅种主任务
         """
-        logger.info("开始执行跨站自动辅种任务")
+        logger.info("开始执行跨站自动辅种任务 ...")
         
         # 检查退出事件
         if self._event and self._event.is_set():
@@ -202,6 +202,8 @@ class CrossSeedAuto(_PluginBase):
         if not self._target_sites:
             logger.error("未配置目标站点，任务终止")
             return
+        
+        logger.info(f"配置检查通过: 下载器={self._downloader}, 目标站点数={len(self._target_sites)}")
         
         try:
             # 加载缓存
@@ -350,8 +352,11 @@ class CrossSeedAuto(_PluginBase):
             logger.info(f"辅种任务完成: 成功={success_count}, 失败={failed_count}")
             
             # 发送通知
-            if self._notify and (success_count > 0 or failed_count > 0):
-                self._send_notification(success_count, failed_count)
+            if self._notify:
+                if success_count > 0 or failed_count > 0:
+                    self._send_notification(success_count, failed_count)
+        
+            logger.info("辅种任务执行完成")
             
         except Exception as e:
             logger.error(f"跨站自动辅种任务执行失败: {str(e)}")
@@ -1251,8 +1256,15 @@ class CrossSeedAuto(_PluginBase):
     def get_service(self) -> List[Dict[str, Any]]:
         """
         注册插件公共服务
+        [{
+            "id": "服务ID",
+            "name": "服务名称",
+            "trigger": "触发器：cron/interval/date/CronTrigger.from_crontab()",
+            "func": self.xxx,
+            "kwargs": {} # 定时器参数
+        }]
         """
-        if self._enabled and self._cron:
+        if self.get_state():
             return [{
                 "id": "CrossSeedAuto",
                 "name": "跨站自动辅种服务",
@@ -1634,16 +1646,15 @@ class CrossSeedAuto(_PluginBase):
         停止插件服务
         """
         try:
+            # 设置退出事件
+            if self._event:
+                self._event.set()
+            
             # 停止定时器
             if self._scheduler:
                 self._scheduler.remove_all_jobs()
                 if self._scheduler.running:
-                    # 设置退出事件
-                    if self._event:
-                        self._event.set()
-                        logger.info("已设置退出事件")
                     self._scheduler.shutdown()
                 self._scheduler = None
-                logger.info("定时任务已停止")
         except Exception as e:
             logger.error(f"停止插件服务失败: {str(e)}")
