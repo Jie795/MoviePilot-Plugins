@@ -29,7 +29,7 @@ class CrossSeedAuto(_PluginBase):
     # 插件图标
     plugin_icon = "crossseed.png"
     # 插件版本
-    plugin_version = "1.1"
+    plugin_version = "1.2"
     # 插件作者
     plugin_author = "zhjay"
     # 作者主页
@@ -68,10 +68,14 @@ class CrossSeedAuto(_PluginBase):
         """
         初始化插件
         """
+        logger.info("=" * 60)
+        logger.info("跨站自动辅种插件开始初始化...")
+        
         # 停止现有任务
         self.stop_service()
 
         if config:
+            logger.info("加载插件配置...")
             self._enabled = config.get("enabled", False)
             self._cron = config.get("cron", "")
             self._onlyonce = config.get("onlyonce", False)
@@ -88,22 +92,29 @@ class CrossSeedAuto(_PluginBase):
             self._max_retry = config.get("max_retry", 3)
             self._clear_cache = config.get("clear_cache", False)
             
+            logger.info(f"配置加载完成: 启用={self._enabled}, 下载器={self._downloader}, "
+                       f"目标站点数={len(self._target_sites)}, 主辅分离={self._enable_split_mode}")
+            
             # 清理缓存
             if self._clear_cache:
+                logger.info("执行缓存清理...")
                 self._clear_cache()
                 self._clear_cache = False
                 self.__update_config()
+                logger.info("缓存清理完成")
 
         # 初始化辅助类
         if self._enabled or self._onlyonce:
+            logger.info("初始化辅助类...")
             self._downloader_helper = DownloaderHelper()
             self._sites_helper = SitesHelper()
             self._media_chain = MediaChain()
+            logger.info("辅助类初始化完成")
 
             # 立即运行一次
             if self._onlyonce:
+                logger.info("配置了立即运行一次，启动定时任务...")
                 self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-                logger.info("跨站自动辅种服务启动，立即运行一次")
                 self._scheduler.add_job(
                     func=self._cross_seed_task,
                     trigger='date',
@@ -119,12 +130,29 @@ class CrossSeedAuto(_PluginBase):
                 if self._scheduler.get_jobs():
                     self._scheduler.print_jobs()
                     self._scheduler.start()
+                    logger.info("定时任务已启动")
+        
+        logger.info("跨站自动辅种插件初始化完成")
+        logger.info("=" * 60)
 
     def get_state(self) -> bool:
         """
         获取插件状态
         """
         return self._enabled
+
+    @staticmethod
+    def get_command() -> List[Dict[str, Any]]:
+        """
+        定义远程控制命令
+        """
+        pass
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        """
+        获取插件API
+        """
+        pass
 
     def __update_config(self):
         """

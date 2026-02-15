@@ -636,8 +636,9 @@
     "author": "zhjay",
     "level": 2,
     "history": {
-      "v1.0": "MoviePilot V2 版本跨站自动辅种插件",
-      "v1.1": "MoviePilot V2 版本跨站自动辅种插件"
+      "v1.2": "修复缺少get_api和get_command方法的问题，添加详细初始化日志",
+      "v1.1": "更新了版本号",
+      "v1.0": "MoviePilot V2 版本跨站自动辅种插件"
     }
   }
 }
