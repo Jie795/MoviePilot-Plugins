@@ -3,6 +3,7 @@ import random
 import time
 import os
 from datetime import datetime, timedelta
+from threading import Event
 from typing import Any, List, Dict, Tuple, Optional
 from urllib.parse import urljoin
 
@@ -44,30 +45,26 @@ class CrossSeedAuto(_PluginBase):
     auth_level = 2
 
     # 私有属性
-    _enabled: bool = False
-    _cron: str = ""
-    _onlyonce: bool = False
-    _notify: bool = False
-    _downloader: str = ""
-    _target_sites: list = []
-    _exclude_tags: list = []
-    _size_tolerance: float = 0.01
-    _enable_split_mode: bool = False
-    _search_cooldown_min: int = 10
-    _search_cooldown_max: int = 10
-    _max_retry: int = 1
-    _clear_cache: bool = False
-
-    # 定时器
-    _scheduler: Optional[BackgroundScheduler] = None
-    
-    # 退出事件（类级别，不在这里初始化）
-    _event = None
-
+    _scheduler = None
+    _enabled = False
+    _cron = None
+    _onlyonce = False
+    _notify = False
+    _downloader = None
+    _target_sites = []
+    _exclude_tags = []
+    _size_tolerance = 0.01
+    _enable_split_mode = False
+    _search_cooldown_min = 10
+    _search_cooldown_max = 10
+    _max_retry = 1
+    _clear_cache = False
+    # 退出事件
+    _event = Event()
     # 辅助类
-    _downloader_helper: Optional[DownloaderHelper] = None
-    _sites_helper: Optional[SitesHelper] = None
-    _media_chain: Optional[MediaChain] = None
+    _downloader_helper = None
+    _sites_helper = None
+    _media_chain = None
 
     def init_plugin(self, config: dict = None):
         """
